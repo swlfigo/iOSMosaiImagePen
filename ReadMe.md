@@ -2,7 +2,7 @@
 
 先看下效果:
 
-![GIF](http://sylarimage.oss-cn-shenzhen.aliyuncs.com/2019-03-22-080513.gif)
+![GIF](./2019-03-22-080513.gif)
 
 
 ### 功能:
