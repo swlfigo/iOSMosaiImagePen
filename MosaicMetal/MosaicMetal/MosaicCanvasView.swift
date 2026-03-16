@@ -34,10 +34,107 @@ class MosaicCanvasView: UIView {
         renderer = MetalRenderer(device: device)
         renderer.loadTexture(from: image)
 
+        setupGestures()
+
         displayLink = CADisplayLink(target: self, selector: #selector(tick))
         displayLink?.add(to: .main, forMode: .common)
         needsRedraw = true
         becomeFirstResponder()
+    }
+
+    // MARK: - 缩放与平移手势
+
+    private var pinchGesture: UIPinchGestureRecognizer!
+    private var panGesture: UIPanGestureRecognizer!
+
+    private func setupGestures() {
+        pinchGesture = UIPinchGestureRecognizer(target: self, action: #selector(handlePinch(_:)))
+        pinchGesture.delegate = self
+        addGestureRecognizer(pinchGesture)
+
+        panGesture = UIPanGestureRecognizer(target: self, action: #selector(handlePan(_:)))
+        panGesture.minimumNumberOfTouches = 2
+        panGesture.maximumNumberOfTouches = 2
+        panGesture.delegate = self
+        addGestureRecognizer(panGesture)
+
+        let doubleTap = UITapGestureRecognizer(target: self, action: #selector(handleDoubleTap(_:)))
+        doubleTap.numberOfTapsRequired = 2
+        addGestureRecognizer(doubleTap)
+    }
+
+    @objc private func handlePinch(_ gesture: UIPinchGestureRecognizer) {
+        guard renderer != nil else { return }
+        switch gesture.state {
+        case .changed:
+            let center = gesture.location(in: self)
+            let oldScale = renderer.zoomScale
+            let newScale = min(max(1.0, oldScale * gesture.scale), 10.0)
+            let r = newScale / oldScale
+
+            let cx = bounds.width / 2
+            let cy = bounds.height / 2
+            renderer.panOffset = CGPoint(
+                x: (center.x - cx) * (1 - r) + renderer.panOffset.x * r,
+                y: (center.y - cy) * (1 - r) + renderer.panOffset.y * r
+            )
+            renderer.zoomScale = newScale
+            gesture.scale = 1.0
+            needsRedraw = true
+        case .ended, .cancelled:
+            snapBackIfNeeded()
+        default: break
+        }
+    }
+
+    @objc private func handlePan(_ gesture: UIPanGestureRecognizer) {
+        guard renderer != nil, renderer.zoomScale > 1.0 else { return }
+        if gesture.state == .changed {
+            let t = gesture.translation(in: self)
+            renderer.panOffset = CGPoint(
+                x: renderer.panOffset.x + t.x,
+                y: renderer.panOffset.y + t.y
+            )
+            gesture.setTranslation(.zero, in: self)
+            needsRedraw = true
+        }
+    }
+
+    @objc private func handleDoubleTap(_ gesture: UITapGestureRecognizer) {
+        guard renderer != nil else { return }
+        if renderer.zoomScale > 1.05 {
+            // 双击恢复原始大小
+            renderer.zoomScale = 1.0
+            renderer.panOffset = .zero
+            needsRedraw = true
+        } else {
+            // 双击放大到 3 倍，以点击位置为中心
+            let center = gesture.location(in: self)
+            let newScale: CGFloat = 3.0
+            let r = newScale / renderer.zoomScale
+            let cx = bounds.width / 2
+            let cy = bounds.height / 2
+            renderer.panOffset = CGPoint(
+                x: (center.x - cx) * (1 - r) + renderer.panOffset.x * r,
+                y: (center.y - cy) * (1 - r) + renderer.panOffset.y * r
+            )
+            renderer.zoomScale = newScale
+            needsRedraw = true
+        }
+    }
+
+    private func snapBackIfNeeded() {
+        if renderer.zoomScale <= 1.05 {
+            renderer.zoomScale = 1.0
+            renderer.panOffset = .zero
+            needsRedraw = true
+        }
+    }
+
+    func resetZoom() {
+        renderer?.zoomScale = 1.0
+        renderer?.panOffset = .zero
+        needsRedraw = true
     }
 
     override func willMove(toWindow newWindow: UIWindow?) {
@@ -143,4 +240,17 @@ class MosaicCanvasView: UIView {
     }
 
     deinit { displayLink?.invalidate() }
+}
+
+// MARK: - UIGestureRecognizerDelegate
+
+extension MosaicCanvasView: UIGestureRecognizerDelegate {
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
+                           shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
+        // 允许捏合和双指平移手势同时识别
+        let gestures: [UIGestureRecognizer?] = [pinchGesture, panGesture]
+        let isOurs = gestures.contains(where: { $0 === gestureRecognizer })
+        let otherIsOurs = gestures.contains(where: { $0 === otherGestureRecognizer })
+        return isOurs && otherIsOurs
+    }
 }

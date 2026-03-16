@@ -15,6 +15,8 @@ class MetalRenderer {
     var patternTexture: MTLTexture?
     var mosaicBlockSize: Float = 20.0
     var usePatternTexture: Bool = false
+    var zoomScale: CGFloat = 1.0
+    var panOffset: CGPoint = .zero
 
     init(device: MTLDevice) {
         self.device = device
@@ -206,6 +208,19 @@ class MetalRenderer {
         }
     }
 
+    /// 计算缩放平移后图片在视图中的显示区域
+    func zoomedImageRect(in viewSize: CGSize) -> CGRect {
+        let base = imageRect(in: viewSize)
+        let cx = viewSize.width / 2
+        let cy = viewSize.height / 2
+        return CGRect(
+            x: (base.origin.x - cx) * zoomScale + cx + panOffset.x,
+            y: (base.origin.y - cy) * zoomScale + cy + panOffset.y,
+            width: base.width * zoomScale,
+            height: base.height * zoomScale
+        )
+    }
+
     // MARK: - 几何辅助方法
 
     /// 生成三角扇形圆形顶点（用于画笔圆点），坐标为 NDC 标准化设备坐标
@@ -245,9 +260,9 @@ class MetalRenderer {
         return result
     }
 
-    /// 将触摸点坐标转换为遮罩纹理的 NDC 坐标（相对于图片显示区域，而非整个视图）
+    /// 将触摸点坐标转换为遮罩纹理的 NDC 坐标（相对于图片显示区域，考虑缩放与平移）
     func pointToMaskNDC(_ pt: CGPoint, viewSize: CGSize) -> SIMD2<Float> {
-        let rect = imageRect(in: viewSize)
+        let rect = zoomedImageRect(in: viewSize)
         let u = Float((pt.x - rect.origin.x) / rect.width)
         let v = Float((pt.y - rect.origin.y) / rect.height)
         return SIMD2(u * 2 - 1, 1 - v * 2)
@@ -260,7 +275,7 @@ class MetalRenderer {
                            viewSize: CGSize, drawable: CAMetalDrawable) {
         guard !points.isEmpty, let mask = maskTexture else { return }
 
-        let rect = imageRect(in: viewSize)
+        let rect = zoomedImageRect(in: viewSize)
         let spacing = CGFloat(brushSize) * 0.3
         let filled = interpolate(points, spacing: spacing)
 
@@ -322,8 +337,8 @@ class MetalRenderer {
         pass.colorAttachments[0].clearColor = MTLClearColorMake(0, 0, 0, 1)
         pass.colorAttachments[0].storeAction = .store
 
-        // 等比适配四边形：将图片显示区域映射到 NDC 坐标
-        let rect = imageRect(in: viewSize)
+        // 等比适配四边形：将图片显示区域映射到 NDC 坐标（考虑缩放与平移）
+        let rect = zoomedImageRect(in: viewSize)
         let left   = Float(rect.minX / viewSize.width) * 2 - 1
         let right  = Float(rect.maxX / viewSize.width) * 2 - 1
         let top    = 1 - Float(rect.minY / viewSize.height) * 2
